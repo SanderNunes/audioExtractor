@@ -6,6 +6,7 @@ import { saveAs } from "file-saver";
 const AudioList = () => {
   const [groupedData, setGroupedData] = useState({});
   const [parsingStatus, setParsingStatus] = useState("");
+  const [transcriptions, setTranscriptions] = useState({});
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -54,11 +55,6 @@ const AudioList = () => {
               }
             });
 
-            if (audioColumns.length === 0) {
-              setParsingStatus("No audio data found in the CSV file.");
-              return;
-            }
-
             const grouped = {};
             result.data.forEach((row, rowIndex) => {
               const createdBy =
@@ -75,7 +71,7 @@ const AudioList = () => {
 
               const rowID = row["ID"] || `Row_${rowIndex + 1}`;
               if (!grouped[createdBy][rowID]) {
-                grouped[createdBy][rowID] = [];
+                grouped[createdBy][rowID] = { audio: [], nonAudio: {} };
               }
 
               audioColumns.forEach((question) => {
@@ -88,10 +84,16 @@ const AudioList = () => {
                   if (!audioData.startsWith("data:")) {
                     audioData = "data:audio/mp3;base64," + audioData;
                   }
-                  grouped[createdBy][rowID].push({
+                  grouped[createdBy][rowID].audio.push({
                     question,
                     audio: audioData,
                   });
+                }
+              });
+
+              Object.keys(row).forEach((key) => {
+                if (!audioColumns.includes(key)) {
+                  grouped[createdBy][rowID].nonAudio[key] = row[key];
                 }
               });
             });
@@ -106,13 +108,41 @@ const AudioList = () => {
     }
   };
 
+  const transcribeAudio = (audioSrc, rowID) => {
+    const recognition = new (window.SpeechRecognition ||
+      window.webkitSpeechRecognition)();
+    recognition.lang = "pt-BR";
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setTranscriptions((prev) => ({ ...prev, [rowID]: transcript }));
+    };
+    recognition.onerror = (event) => {
+      console.error("Transcription error:", event.error);
+    };
+
+    const audio = new Audio(audioSrc);
+    audio.onloadedmetadata = () => {
+      recognition.start();
+      audio.play();
+    };
+  };
+
   const downloadAllAsZip = () => {
     const zip = new JSZip();
+    const nonAudioResponses = [];
+
     Object.entries(groupedData).forEach(([createdBy, rows]) => {
       const userFolder = zip.folder(createdBy);
-      Object.entries(rows).forEach(([rowID, responses]) => {
+
+      Object.entries(rows).forEach(([rowID, data]) => {
         const rowFolder = userFolder.folder(rowID);
-        responses.forEach((row, index) => {
+        const nonAudioRow = {
+          User: createdBy,
+          "Row ID": rowID,
+          ...data.nonAudio,
+        };
+
+        data.audio.forEach((row, index) => {
           const base64Data = row.audio.split(",")[1];
           const binaryData = atob(base64Data);
           const bytes = new Uint8Array(binaryData.length);
@@ -122,10 +152,16 @@ const AudioList = () => {
           const blob = new Blob([bytes], { type: "audio/mp3" });
           rowFolder.file(`${row.question.substring(0, 20)}_${index}.mp3`, blob);
         });
+
+        nonAudioResponses.push(nonAudioRow);
       });
     });
+
+    const csvContent = Papa.unparse(nonAudioResponses);
+    zip.file("Non_Audio_Responses.csv", csvContent);
+
     zip.generateAsync({ type: "blob" }).then((content) => {
-      saveAs(content, "All_Audios.zip");
+      saveAs(content, "All_Audios_and_Responses.zip");
     });
   };
 
@@ -158,7 +194,7 @@ const AudioList = () => {
           {Object.entries(groupedData).map(([createdBy, rows]) => (
             <div key={createdBy}>
               <h2>Responses from: {createdBy}</h2>
-              {Object.entries(rows).map(([rowID, responses]) => (
+              {Object.entries(rows).map(([rowID, data]) => (
                 <div
                   key={rowID}
                   style={{
@@ -169,8 +205,13 @@ const AudioList = () => {
                 >
                   <h3>Row: {rowID}</h3>
                   <ul>
-                    {responses.map((row, index) => (
-                      <li key={index}>{row.question}</li>
+                    {data.audio.map((row, index) => (
+                      <li key={index}>
+                        {row.question}
+                        {transcriptions[rowID] && (
+                          <p>Transcription: {transcriptions[rowID]}</p>
+                        )}
+                      </li>
                     ))}
                   </ul>
                 </div>

@@ -129,13 +129,11 @@ const AudioList = () => {
 
   const downloadAllAsZip = () => {
     const zip = new JSZip();
+    const audioFolder = zip.folder("Audios"); // Store all audio files in a single folder
     const nonAudioResponses = [];
 
     Object.entries(groupedData).forEach(([createdBy, rows]) => {
-      const userFolder = zip.folder(createdBy);
-
       Object.entries(rows).forEach(([rowID, data]) => {
-        const rowFolder = userFolder.folder(rowID);
         const nonAudioRow = {
           User: createdBy,
           "Row ID": rowID,
@@ -150,7 +148,12 @@ const AudioList = () => {
             bytes[i] = binaryData.charCodeAt(i);
           }
           const blob = new Blob([bytes], { type: "audio/mp3" });
-          rowFolder.file(`${row.question.substring(0, 20)}_${index}.mp3`, blob);
+
+          // Format filename with question name and row ID
+          const sanitizedQuestion = row.question.replace(/[^a-zA-Z0-9]/g, "_"); // Remove special characters
+          const fileName = `${sanitizedQuestion}_Survey_${rowID}.mp3`;
+
+          audioFolder.file(fileName, blob);
         });
 
         nonAudioResponses.push(nonAudioRow);
